@@ -1,0 +1,38 @@
+# Typecheck, test and build on every PR and push.
+#
+# The build runs even though nothing consumes its output here: `tsup` emits the
+# .d.ts files through a separate rollup pass that `tsc --noEmit` never
+# exercises, so a broken type export only shows up at pack time otherwise.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # 18 is the floor declared in package.json engines — the version that
+        # first shipped a global fetch. 22 and 24 are the current LTS lines.
+        node: ["18", "22", "24"]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build

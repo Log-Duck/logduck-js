@@ -1,0 +1,80 @@
+# Publishes the package to npmjs.com.
+#
+#   npm version minor && git push --follow-tags
+#
+# `npm version` writes package.json and creates the matching tag in one step,
+# so the two cannot disagree. The job checks anyway: a hand-made tag is the
+# case worth catching, and an npm version can never be replaced once published.
+name: Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # Required for provenance: npm signs the package against this workflow
+      # run, so consumers can verify which commit and workflow built it.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Resolve and check the version
+        id: version
+        run: |
+          pkg=$(node -p "require('./package.json').version")
+
+          # A manual run has no tag to check against, so package.json stands alone.
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            tag="${GITHUB_REF_NAME#v}"
+            if [[ "$tag" != "$pkg" ]]; then
+              echo "::error::Tag says $tag but package.json says $pkg."
+              exit 1
+            fi
+          fi
+
+          echo "Publishing version $pkg"
+          echo "value=$pkg" >> "$GITHUB_OUTPUT"
+
+      # npm answers a duplicate publish with a 403 that reads like an auth
+      # failure, which sends you looking in the wrong place. Ask up front.
+      - name: Refuse to republish an existing version
+        run: |
+          v="${{ steps.version.outputs.value }}"
+          if npm view "logduck@$v" version >/dev/null 2>&1; then
+            echo "::error::logduck@$v is already on npm. Versions there are immutable — bump and re-tag."
+            exit 1
+          fi
+          echo "Version $v is free."
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+      # `npm publish` runs prepublishOnly, which builds. Publishing the built
+      # dist without that would risk shipping a stale one from the cache.
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [[ -z "$NODE_AUTH_TOKEN" ]]; then
+            echo "::error::NPM_TOKEN is not set on this repository."
+            exit 1
+          fi
+          npm publish --provenance --access public
