@@ -1,6 +1,6 @@
 {
   "name": "logduck",
-  "version": "1.0.1",
+  "version": "2.0.0",
   "description": "Official JavaScript and TypeScript SDK for LogDuck event logging and notifications",
   "license": "MIT",
   "author": "LogDuck",
