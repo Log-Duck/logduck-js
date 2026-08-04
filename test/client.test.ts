@@ -96,6 +96,30 @@ describe('LogDuckClient', () => {
       const body = JSON.parse(fetchMock.mock.calls[0]![1].body);
       expect(body).not.toHaveProperty('subject');
       expect(body).not.toHaveProperty('emoji');
+      expect(body).not.toHaveProperty('message');
+      expect(body).not.toHaveProperty('sessionid');
+    });
+
+    it('sends CloudEvents wire names, not the camelCase option names', async () => {
+      // A CloudEvents extension attribute name must be lowercase alphanumeric,
+      // so sessionId goes out as sessionid. The server discards what it does
+      // not recognise rather than erroring, so getting this wrong loses the
+      // field silently - hence asserting the wrong spelling is absent too.
+      const fetchMock = vi.fn().mockResolvedValue(accepted());
+      const client = new LogDuckClient(opts(fetchMock));
+
+      await client.send({
+        type: 'order.placed',
+        subject: 'order_9127',
+        sessionId: 'sess_8f21c',
+        message: 'Order placed on the Pro plan',
+      });
+
+      const body = JSON.parse(fetchMock.mock.calls[0]![1].body);
+      expect(body.sessionid).toBe('sess_8f21c');
+      expect(body.message).toBe('Order placed on the Pro plan');
+      expect(body).not.toHaveProperty('sessionId');
+      expect(body).not.toHaveProperty('metadata');
     });
   });
 
@@ -112,6 +136,7 @@ describe('LogDuckClient', () => {
       ['type', { type: 'a'.repeat(101) }],
       ['subject', { type: 'ok', subject: 'a'.repeat(501) }],
       ['sessionId', { type: 'ok', sessionId: 'a'.repeat(257) }],
+      ['message', { type: 'ok', message: 'a'.repeat(501) }],
       ['emoji', { type: 'ok', emoji: 'a'.repeat(11) }],
     ])('rejects an over-long %s', async (_field, event) => {
       const fetchMock = vi.fn();

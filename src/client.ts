@@ -32,6 +32,7 @@ const LIMITS = {
   source: 200,
   subject: 500,
   sessionId: 256,
+  message: 500,
   emoji: 10,
 } as const;
 
@@ -126,7 +127,11 @@ export class LogDuckClient {
       type: event.type,
       source: this.source,
       subject: event.subject,
-      sessionId: event.sessionId,
+      // The wire name is lowercase: a CloudEvents extension attribute name
+      // must be lowercase alphanumeric, and the server discards anything it
+      // does not recognise rather than erroring.
+      sessionid: event.sessionId,
+      message: event.message,
       time: event.time instanceof Date ? event.time.toISOString() : event.time,
       data: event.data,
       emoji: event.emoji,
@@ -249,6 +254,8 @@ export class LogDuckClient {
       return `subject exceeds ${LIMITS.subject} characters`;
     if ((event.sessionId?.length ?? 0) > LIMITS.sessionId)
       return `sessionId exceeds ${LIMITS.sessionId} characters`;
+    if ((event.message?.length ?? 0) > LIMITS.message)
+      return `message exceeds ${LIMITS.message} characters`;
     if ((event.emoji?.length ?? 0) > LIMITS.emoji)
       return `emoji exceeds ${LIMITS.emoji} characters`;
     return null;

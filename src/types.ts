@@ -10,8 +10,21 @@ export interface LogDuckEvent {
   type: string;
   /** The resource the event is about, e.g. a user or order id (max 500). */
   subject?: string;
-  /** Groups related events within a session (max 256). */
+  /**
+   * Groups related events within a session (max 256).
+   *
+   * Sent as `sessionid`. A CloudEvents extension attribute name must be
+   * lowercase alphanumeric, so the wire name differs from this one.
+   */
   sessionId?: string;
+  /**
+   * Human-readable summary of the event (max 500 characters).
+   *
+   * This is what a push notification shows. Without it the notification body
+   * falls back to listing the first few `data` keys, which reads like
+   * `total: 4999, currency: NOK` rather than "Order placed on the Pro plan".
+   */
+  message?: string;
   /** When it happened. Defaults to server time if unset. */
   time?: Date | string;
   /** Arbitrary JSON payload. */
