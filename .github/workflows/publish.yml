@@ -25,6 +25,18 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
+    # Named on the npm side too, where it narrows the trusted publisher further:
+    # the OIDC token has to come from a job running in *this* environment, not
+    # merely from this workflow. It is also the only place a human gate can be
+    # attached to an npm version, which can never be replaced once live —
+    # required reviewers and a tags-only ref rule are configured in the
+    # repository's environment settings, not here.
+    #
+    # If npm names an environment and this line is missing or spelled
+    # differently, the claim will not match and every publish fails.
+    environment: release
+
     permissions:
       contents: read
       # This is the credential. npm trusts a short-lived OIDC token minted for
