@@ -1,6 +1,10 @@
-# Publishes the package to npmjs.com.
+# Publishes the package to npmjs.com over OIDC trusted publishing — no token.
 #
 #   npm version minor && git push --follow-tags
+#
+# The npmjs.com side must name this repository AND this workflow file as a
+# trusted publisher, or the publish step fails with an authentication error.
+# That pairing is the whole credential.
 #
 # `npm version` writes package.json and creates the matching tag in one step,
 # so the two cannot disagree. The job checks anyway: a hand-made tag is the
@@ -23,8 +27,11 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      # Required for provenance: npm signs the package against this workflow
-      # run, so consumers can verify which commit and workflow built it.
+      # This is the credential. npm trusts a short-lived OIDC token minted for
+      # this specific repository and workflow file, so there is no long-lived
+      # secret to expire — which is exactly how v2.0.0 was lost: NPM_TOKEN was
+      # set, npm rejected it, and npm answers an unauthorised PUT with a 404
+      # that reads like a missing package. It also signs the provenance.
       id-token: write
     steps:
       - uses: actions/checkout@v6
@@ -34,6 +41,15 @@ jobs:
           node-version: "22"
           cache: npm
           registry-url: https://registry.npmjs.org
+
+      # Node 22 ships npm 10, which predates trusted publishing and would fall
+      # back to looking for a token that no longer exists. Pinned to a floor
+      # rather than @latest so a future npm cannot change the publish path
+      # under us without this line changing first.
+      - name: Use an npm that can authenticate over OIDC
+        run: |
+          npm install -g npm@^11.5.1
+          npm --version
 
       - name: Resolve and check the version
         id: version
@@ -69,12 +85,15 @@ jobs:
 
       # `npm publish` runs prepublishOnly, which builds. Publishing the built
       # dist without that would risk shipping a stale one from the cache.
+      #
+      # No token, and no NODE_AUTH_TOKEN: npm authenticates from the OIDC token
+      # granted by `id-token: write` above. This requires the package to name
+      # this repository and this workflow file as a trusted publisher in its
+      # npmjs.com settings — that pairing is the credential, so a fork or a
+      # different workflow in this same repo cannot publish.
+      #
+      # `--provenance` is kept explicit. Trusted publishing is documented as
+      # generating it anyway, and if a future npm rejects the combination the
+      # run fails loudly rather than quietly shipping without attestation.
       - name: Publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [[ -z "$NODE_AUTH_TOKEN" ]]; then
-            echo "::error::NPM_TOKEN is not set on this repository."
-            exit 1
-          fi
-          npm publish --provenance --access public
+        run: npm publish --provenance --access public
