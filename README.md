@@ -174,6 +174,53 @@ larger than a small country is wrong for most of the people in it.
 These locate a city, not a device — the underlying accuracy radius is typically
 5–200 km. If you need finer, resolve it yourself and put it in the event's data.
 
+## Site usage: page views (`logduck/usage`)
+
+A second, separate entry point counts how people move through a site — page
+views, time on page, 404s, site searches — into the **Site** tab of your
+project. It is not the events client: a page view never triggers a push or a
+webhook, is billed against its own allowance, and is **anonymous by design**.
+Nothing is stored on the visitor's device (no cookie, no local storage, no
+fingerprint), so no consent banner is needed for it. The server keeps a
+country and a city from the address and a device class and browser family from
+the user agent, and discards both.
+
+```ts
+import { createUsage } from 'logduck/usage';
+
+const usage = createUsage({ key: 'ld_...' });   // a client key, with your origins listed
+```
+
+That records a `page.view` now and on every `pushState`, `replaceState` and
+`popstate`, and a `page.leave` (time on page, scroll depth) when the tab is
+hidden, batched and sent with `sendBeacon` so nothing is lost on navigation.
+Or as a script tag, with no bundler:
+
+```html
+<script async src="https://cdn.jsdelivr.net/npm/logduck/dist/usage.global.js" data-key="ld_..."></script>
+```
+
+Then `window.logduck.search('ducks')`. The key is a **client key** created for
+the site in the dashboard, with the site's origins listed: the key ships in the
+page, and the origin list is what stops another site spending your allowance.
+A server key is refused.
+
+| Option / method | |
+|---|---|
+| `autoTrack: false` | For a router the SDK cannot see; call `usage.page({ path, referrer, title })` yourself |
+| `usage.notFound()` | The current page was a 404 |
+| `usage.search(term)` | A site search. Stored only if the environment has search terms switched on; digit runs of six or more are masked on the server |
+| `dimensions`, `usage.setDimensions({...})` | Up to ten lowercase keys describing the page — `dealer`, `section`, `variant` — never an identifier (keys like `email` or `user_id` are refused) |
+| `sampleRate: 8` | Send one hit in eight. A power of two up to 1,024, and the environment must allow it (off by default); sent hits carry the rate and the dashboard weights them back |
+| `consent(true)`, `identify(id)` | Reserved for the consented mode (unique visitors, journeys). No-ops today, so your integration does not change when it arrives |
+
+Without a `document` — server rendering, a worker — `createUsage` returns an
+inert object and every call is a no-op. The first non-204 of a session is
+warned once in the console, so a wrong key or an unlisted origin is visible
+rather than silently counted as nothing. Ad blockers block the API host for
+roughly a fifth to a third of visitors; a first-party collection domain is
+planned.
+
 ## Using the API without the SDK
 
 The SDK is a convenience, not a requirement — `POST /v1/events` is a plain JSON
