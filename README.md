@@ -214,6 +214,9 @@ A server key is refused.
 | `sampleRate: 8` | Send one hit in eight. A power of two up to 1,024, and the environment must allow it (off by default); sent hits carry the rate and the dashboard weights them back |
 | `consent(true)`, `identify(id)` | Reserved for the consented mode (unique visitors, journeys). No-ops today, so your integration does not change when it arrives |
 
+A session is one tab: the id is kept in `sessionStorage`, so it survives
+reloads and full-page navigations, ends when the tab closes, and starts afresh
+after thirty idle minutes. Nothing is written to `localStorage` or a cookie.
 Without a `document` — server rendering, a worker — `createUsage` returns an
 inert object and every call is a no-op. The first non-204 of a session is
 warned once in the console, so a wrong key or an unlisted origin is visible
