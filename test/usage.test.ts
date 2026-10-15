@@ -35,6 +35,7 @@ describe('createUsage', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    sessionStorage.clear();
   });
 
   const make = (extra: Record<string, unknown> = {}) =>
@@ -67,6 +68,32 @@ describe('createUsage', () => {
     expect(body!.hits[0]!.id).toMatch(/^[0-9a-f]{32}$/);
     expect(typeof body!.hits[0]!.sessionid).toBe('string');
     usage.stop();
+  });
+
+  it('keeps one session per tab across page loads, and starts a new one after thirty idle minutes', async () => {
+    let clock = 1_000_000;
+    const now = () => clock;
+    const first = make({ autoTrack: false, now });
+    first.page({ path: '/a' });
+    await vi.advanceTimersByTimeAsync(1000);
+    first.stop();
+
+    clock += 10 * 60 * 1000;
+    const second = make({ autoTrack: false, now });
+    second.page({ path: '/b' });
+    await vi.advanceTimersByTimeAsync(1000);
+    second.stop();
+
+    clock += 31 * 60 * 1000;
+    const third = make({ autoTrack: false, now });
+    third.page({ path: '/c' });
+    await vi.advanceTimersByTimeAsync(1000);
+    third.stop();
+
+    const [a, b, c] = sentBodies(fetchMock).map((body) => body!.hits[0]!.sessionid);
+    expect(a).toBe(b);
+    expect(c).not.toBe(a);
+    expect(sessionStorage.getItem('logduck.session')).toMatch(new RegExp(`^${c}:\\d+$`));
   });
 
   it('batches hits that arrive within the flush interval, fifty per request', async () => {
