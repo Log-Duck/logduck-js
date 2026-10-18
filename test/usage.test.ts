@@ -98,10 +98,28 @@ describe('createUsage', () => {
 
   it('batches hits that arrive within the flush interval, fifty per request', async () => {
     const usage = make({ autoTrack: false });
-    for (let i = 0; i < 60; i++) usage.page({ path: `/p${i}` });
+    for (let i = 0; i < 60; i++) usage.search(`q${i}`);
     await vi.advanceTimersByTimeAsync(1000);
     const bodies = sentBodies(fetchMock);
     expect(bodies.map((b) => b.hits.length)).toEqual([50, 10]);
+  });
+
+  it('without autoTrack, a reported page ends the previous one and hiding the tab ends the last: dwell and scroll are never lost', async () => {
+    const usage = make({ autoTrack: false });
+    usage.page({ path: '/a' });
+    vi.advanceTimersByTime(3000);
+    usage.page({ path: '/b' });
+    await vi.advanceTimersByTimeAsync(1000);
+    fetchMock.mockClear();
+
+    vi.advanceTimersByTime(2000);
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true, writable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    const [sent] = beacon.mock.calls.map((call) => JSON.parse(call[1] as string) as { hits: { type: string; path: string; durationms?: number }[] });
+    expect(sent!.hits.map((h) => [h.type, h.path])).toEqual([['page.leave', '/b']]);
+    expect(sent!.hits[0]!.durationms).toBe(3000);
+    usage.stop();
   });
 
   it('follows pushState and popstate: a leave for the old page, a view for the new one with the old page as referrer', async () => {
@@ -170,9 +188,10 @@ describe('createUsage', () => {
     const usage = make({ autoTrack: false, sampleRate: 4 });
     for (let i = 0; i < 400; i++) usage.page({ path: `/p${i}` });
     await vi.advanceTimersByTimeAsync(1000);
+    // 400 views and 399 leaves: a quarter of 799 kept, give or take the hash.
     const hits = sentBodies(fetchMock).flatMap((b) => b.hits);
-    expect(hits.length).toBeGreaterThan(50);
-    expect(hits.length).toBeLessThan(150);
+    expect(hits.length).toBeGreaterThan(120);
+    expect(hits.length).toBeLessThan(280);
     expect(hits.every((h) => h.samplerate === 4 && sampleKeeps(h.id as string, 4))).toBe(true);
   });
 

@@ -311,7 +311,17 @@ export function createUsage(options: UsageOptions): Usage {
     view('page.view');
   };
 
+  // Dwell and scroll belong to every integration: autoTrack only decides who notices a
+  // navigation, not whether a page that is left reports how long it was read.
   const restore: (() => void)[] = [];
+  window.addEventListener('scroll', onScroll, { passive: true });
+  document.addEventListener('visibilitychange', onHide);
+  window.addEventListener('pagehide', onPageHide);
+  restore.push(() => {
+    window.removeEventListener('scroll', onScroll);
+    document.removeEventListener('visibilitychange', onHide);
+    window.removeEventListener('pagehide', onPageHide);
+  });
   if (options.autoTrack ?? true) {
     const history = window.history;
     for (const method of ['pushState', 'replaceState'] as const) {
@@ -326,21 +336,20 @@ export function createUsage(options: UsageOptions): Usage {
       });
     }
     window.addEventListener('popstate', onNavigate);
-    window.addEventListener('scroll', onScroll, { passive: true });
-    document.addEventListener('visibilitychange', onHide);
-    window.addEventListener('pagehide', onPageHide);
-    restore.push(() => {
-      window.removeEventListener('popstate', onNavigate);
-      window.removeEventListener('scroll', onScroll);
-      document.removeEventListener('visibilitychange', onHide);
-      window.removeEventListener('pagehide', onPageHide);
-    });
+    restore.push(() => window.removeEventListener('popstate', onNavigate));
     view('page.view');
   }
 
+  // A page reported by the caller ends the one in progress, as a noticed navigation does.
   return {
-    page: (pageOptions) => view('page.view', pageOptions),
-    notFound: (pageOptions) => view('page.notfound', pageOptions),
+    page: (pageOptions) => {
+      leave();
+      view('page.view', pageOptions);
+    },
+    notFound: (pageOptions) => {
+      leave();
+      view('page.notfound', pageOptions);
+    },
     search: (term, pageOptions) => {
       const trimmed = term.trim();
       if (!trimmed) return;
