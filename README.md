@@ -207,7 +207,7 @@ A server key is refused.
 
 | Option / method | |
 |---|---|
-| `autoTrack: false` | For a router the SDK cannot see; call `usage.page({ path, referrer, title })` yourself |
+| `autoTrack: false` | For a router the SDK cannot see; call `usage.page({ path, referrer, title })` yourself. Each call ends the previous page (its `page.leave`), and hiding the tab ends the last one, exactly as with auto-tracking |
 | `usage.notFound()` | The current page was a 404 |
 | `usage.search(term)` | A site search. Stored only if the environment has search terms switched on; digit runs of six or more are masked on the server |
 | `dimensions`, `usage.setDimensions({...})` | Up to ten lowercase keys describing the page — `dealer`, `section`, `variant` — never an identifier (keys like `email` or `user_id` are refused) |
