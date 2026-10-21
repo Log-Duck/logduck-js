@@ -120,37 +120,6 @@ function randomId(): string {
   return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
 }
 
-const SESSION_KEY = 'logduck.session';
-const SESSION_GAP_MS = 30 * 60 * 1000;
-
-/**
- * The session id lives in `sessionStorage`: one per tab, surviving reloads and full-page
- * navigations, gone when the tab closes, and started afresh after thirty idle minutes - the
- * boundary the rollups count. Minted per page load, a plain multi-page site would report one
- * session per view. Storage can be absent or throw (a private window, a sandboxed frame), and
- * then the session is the page load.
- */
-function sessionId(now: () => number): string {
-  const at = now();
-  try {
-    const stored = sessionStorage.getItem(SESSION_KEY);
-    if (stored) {
-      const separator = stored.lastIndexOf(':');
-      const id = stored.slice(0, separator);
-      const last = Number(stored.slice(separator + 1));
-      if (id && at - last < SESSION_GAP_MS) {
-        sessionStorage.setItem(SESSION_KEY, `${id}:${at}`);
-        return id;
-      }
-    }
-    const id = randomId();
-    sessionStorage.setItem(SESSION_KEY, `${id}:${at}`);
-    return id;
-  } catch {
-    return randomId();
-  }
-}
-
 /** Inert: every method a no-op. What a server-rendered page or a worker gets. */
 function inert(): Usage {
   const nothing = (): void => {};
@@ -192,7 +161,9 @@ export function createUsage(options: UsageOptions): Usage {
   }
 
   let dimensions = cleanDimensions(options.dimensions, warn);
-  const sessionid = sessionId(now);
+  // One id per page load, held in memory: the server joins loads into sessions itself, from a
+  // key that rotates daily, so nothing is stored on or read from the device.
+  const sessionid = randomId();
   const queue: Hit[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   let warnedOnce = false;
