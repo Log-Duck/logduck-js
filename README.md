@@ -215,7 +215,7 @@ A server key is refused.
 | `consent(true)`, `identify(id)` | Reserved for the consented mode (unique visitors, journeys). No-ops today, so your integration does not change when it arrives |
 
 Nothing is stored on or read from the visitor's device: no cookie, no local or
-session storage, no fingerprint. Page views are joined into sessions on the
+session storage, no persistent fingerprint. Page views are joined into sessions on the
 server, under a key that changes every day and never leaves it.
 Without a `document` — server rendering, a worker — `createUsage` returns an
 inert object and every call is a no-op. The first non-204 of a session is
