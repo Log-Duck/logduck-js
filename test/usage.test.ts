@@ -18,6 +18,24 @@ function sentBodies(fetchMock: ReturnType<typeof vi.fn>): Sent[] {
   return fetchMock.mock.calls.map(([, init]) => JSON.parse((init as RequestInit).body as string) as Sent);
 }
 
+// jsdom under this vitest configuration exposes no localStorage (opaque origin); the SDK
+// guards every access, and the tests need a stand-in to observe what it writes.
+if (typeof localStorage === 'undefined') {
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => void store.set(key, String(value)),
+      removeItem: (key: string) => void store.delete(key),
+      clear: () => store.clear(),
+      get length() {
+        return store.size;
+      },
+    },
+  });
+}
+
 describe('createUsage', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
   let beacon: ReturnType<typeof vi.fn>;
@@ -35,6 +53,8 @@ describe('createUsage', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    localStorage.clear();
+    document.cookie = 'logduck_vid=; Max-Age=0; Path=/';
   });
 
   const make = (extra: Record<string, unknown> = {}) =>
@@ -81,7 +101,7 @@ describe('createUsage', () => {
     const [a, b] = sentBodies(fetchMock).map((body) => body!.hits[0]!.sessionid);
     expect(a).not.toBe(b);
     expect(sessionStorage.length).toBe(0);
-    expect(typeof localStorage === 'undefined' || localStorage.length === 0).toBe(true);
+    expect(localStorage.length).toBe(0);
   });
 
   it('batches hits that arrive within the flush interval, fifty per request', async () => {
@@ -189,6 +209,83 @@ describe('createUsage', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(silent.warn).toHaveBeenCalledWith(expect.stringContaining('power of two'));
     expect(sentBodies(fetchMock)[0]!.hits[0]!.samplerate).toBe(1);
+  });
+
+  it('stores no visitor ID until consent, then mints one, keeps it across page loads, and deletes it on withdrawal', async () => {
+    const first = make({ autoTrack: false });
+    first.page({ path: '/a' });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sentBodies(fetchMock)[0]!.hits[0]).not.toHaveProperty('visitorid');
+    expect(localStorage.getItem('logduck_vid')).toBeNull();
+
+    fetchMock.mockClear();
+    first.consent(true);
+    first.page({ path: '/b' });
+    await vi.advanceTimersByTimeAsync(1000);
+    const id = sentBodies(fetchMock)[0]!.hits[0]!.visitorid as string;
+    expect(id).toMatch(/^[0-9a-f]{32}$/);
+    expect(localStorage.getItem('logduck_vid')).toBe(id);
+    first.stop();
+
+    // A later page load finds it without asking again.
+    fetchMock.mockClear();
+    const second = make({ autoTrack: false });
+    second.page({ path: '/c' });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sentBodies(fetchMock)[0]!.hits[0]!.visitorid).toBe(id);
+
+    fetchMock.mockClear();
+    second.consent(false);
+    second.page({ path: '/d' });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sentBodies(fetchMock)[0]!.hits[0]).not.toHaveProperty('visitorid');
+    expect(localStorage.getItem('logduck_vid')).toBeNull();
+    second.stop();
+  });
+
+  it('ignores consent under Global Privacy Control, with one warning, and drops an ID stored earlier', async () => {
+    localStorage.setItem('logduck_vid', 'f'.repeat(32));
+    Object.defineProperty(navigator, 'globalPrivacyControl', { value: true, configurable: true });
+    try {
+      const usage = make({ autoTrack: false });
+      usage.consent(true);
+      usage.consent(true);
+      usage.page({ path: '/a' });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(sentBodies(fetchMock)[0]!.hits[0]).not.toHaveProperty('visitorid');
+      expect(silent.warn.mock.calls.filter((c) => String(c[0]).includes('Global Privacy Control'))).toHaveLength(1);
+      usage.stop();
+    } finally {
+      Object.defineProperty(navigator, 'globalPrivacyControl', { value: undefined, configurable: true });
+      localStorage.removeItem('logduck_vid');
+    }
+  });
+
+  it('identify attaches the user id and logged-in to later hits without any visitor ID, and an empty id clears it', async () => {
+    const usage = make({ autoTrack: false });
+    usage.identify('  user-42  ');
+    usage.page({ path: '/account' });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sentBodies(fetchMock)[0]!.hits[0]).toMatchObject({ userid: 'user-42', loggedin: true });
+    expect(sentBodies(fetchMock)[0]!.hits[0]).not.toHaveProperty('visitorid');
+    expect(localStorage.length).toBe(0);
+
+    fetchMock.mockClear();
+    usage.identify('');
+    usage.page({ path: '/' });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sentBodies(fetchMock)[0]!.hits[0]).not.toHaveProperty('userid');
+    usage.stop();
+  });
+
+  it('writes the visitor ID as a cookie on the given domain instead of local storage', async () => {
+    const usage = make({ autoTrack: false, cookieDomain: 'localhost' });
+    usage.consent(true);
+    expect(document.cookie).toMatch(/logduck_vid=[0-9a-f]{32}/);
+    expect(localStorage.getItem('logduck_vid')).toBeNull();
+    usage.consent(false);
+    expect(document.cookie).not.toMatch(/logduck_vid=[0-9a-f]/);
+    usage.stop();
   });
 
   it('warns once per session on the first non-204, so a wrong key or origin is visible', async () => {

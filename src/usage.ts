@@ -46,6 +46,12 @@ export interface UsageOptions {
   dimensions?: Record<string, string>;
   /** The hostname to report. Defaults to `location.hostname`. */
   host?: string;
+  /**
+   * Where the visitor ID lives once {@link Usage.consent} has been granted: a first-party cookie
+   * on this domain (`.example.com` makes one visitor across subdomains) instead of local storage,
+   * which is per origin. Only used after consent; nothing is written before it.
+   */
+  cookieDomain?: string;
   /** Where warnings go. Defaults to `console`. */
   logger?: LogDuckLogger;
   /** How long hits wait to be batched before a flush. Default one second. */
@@ -78,12 +84,19 @@ export interface Usage {
   /** Replaces the dimensions attached to every later hit. */
   setDimensions(dimensions: Record<string, string>): void;
   /**
-   * Consented mode is not yet available: this does nothing today, and will mint the visitor
-   * ID once the server supports identity collection. Safe to call now so the integration does
-   * not change later.
+   * Records that the visitor consented to being recognised across visits. Mints a random
+   * visitor ID, stores it in a first-party cookie or local storage, and attaches it to every
+   * later hit; `consent(false)` deletes it and stops. Ignored, with one warning, when the
+   * browser sends the Global Privacy Control signal - that is a binding opt-out. The server
+   * stores the ID only when the organization has switched identity collection on in the
+   * dashboard and declared its basis; until then every identifier is stripped and counted.
    */
   consent(granted: boolean): void;
-  /** See {@link Usage.consent}: a no-op until identity collection exists. */
+  /**
+   * Links later hits to your own user ID from an authenticated session (and marks them logged
+   * in). Needs no visitor ID: under a contract, legitimate-interest or public-task basis this
+   * works without consent, because nothing is stored on the device. An empty string clears it.
+   */
   identify(userId: string): void;
   /** Sends whatever is queued now. */
   flush(): void;
@@ -108,6 +121,9 @@ interface Hit {
   term?: string;
   dimensions?: Record<string, string>;
   samplerate: number;
+  visitorid?: string;
+  userid?: string;
+  loggedin?: boolean;
 }
 
 function randomId(): string {
@@ -118,6 +134,46 @@ function randomId(): string {
     return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
   }
   return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+}
+
+const VISITOR_KEY = 'logduck_vid';
+const VISITOR_MAX_AGE_S = 13 * 30 * 24 * 60 * 60; // thirteen months, the French regulator's analytics ceiling
+
+function gpcSignalled(): boolean {
+  return typeof navigator !== 'undefined' && (navigator as Navigator & { globalPrivacyControl?: boolean }).globalPrivacyControl === true;
+}
+
+/** The stored visitor ID, if consent was granted on an earlier visit; cookie first, then local storage. */
+function readVisitorId(): string | undefined {
+  try {
+    const fromCookie = document.cookie.split(';').map((c) => c.trim()).find((c) => c.startsWith(`${VISITOR_KEY}=`));
+    if (fromCookie) return fromCookie.slice(VISITOR_KEY.length + 1) || undefined;
+    return localStorage.getItem(VISITOR_KEY) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeVisitorId(id: string, cookieDomain: string | undefined): void {
+  try {
+    if (cookieDomain) {
+      const secure = location.protocol === 'https:' ? '; Secure' : '';
+      document.cookie = `${VISITOR_KEY}=${id}; Max-Age=${VISITOR_MAX_AGE_S}; Domain=${cookieDomain}; Path=/; SameSite=Lax${secure}`;
+    } else {
+      localStorage.setItem(VISITOR_KEY, id);
+    }
+  } catch {
+    // Storage refused: the visitor is recognised for this page only.
+  }
+}
+
+function clearVisitorId(cookieDomain: string | undefined): void {
+  try {
+    document.cookie = `${VISITOR_KEY}=; Max-Age=0; Path=/; SameSite=Lax${cookieDomain ? `; Domain=${cookieDomain}` : ''}`;
+    localStorage.removeItem(VISITOR_KEY);
+  } catch {
+    // Nothing to clear.
+  }
 }
 
 /** Inert: every method a no-op. What a server-rendered page or a worker gets. */
@@ -164,6 +220,11 @@ export function createUsage(options: UsageOptions): Usage {
   // One id per page load, held in memory: the server joins loads into sessions itself, from a
   // key that rotates daily, so nothing is stored on or read from the device.
   const sessionid = randomId();
+  // Identity (consented mode). Nothing is stored until consent(true); an ID stored on an
+  // earlier visit is reused, unless GPC is now on - the signal wins over an old consent.
+  let visitorId: string | undefined = gpcSignalled() ? undefined : readVisitorId();
+  let userId: string | undefined;
+  let warnedGpc = false;
   const queue: Hit[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   let warnedOnce = false;
@@ -186,6 +247,11 @@ export function createUsage(options: UsageOptions): Usage {
     if (!sampleKeeps(id, sampleRate)) return;
     const full: Hit = { id, time: new Date(now()).toISOString(), sessionid, platform: 'web', sdkversion: VERSION, samplerate: sampleRate, ...hit };
     if (dimensions && !full.dimensions) full.dimensions = dimensions;
+    if (visitorId) full.visitorid = visitorId;
+    if (userId) {
+      full.userid = userId;
+      full.loggedin = true;
+    }
     queue.push(full);
     if (queue.length > DEFAULT_QUEUE_LIMIT) queue.splice(0, queue.length - DEFAULT_QUEUE_LIMIT);
     if (queue.length >= HITS_PER_REQUEST) flush('batch');
@@ -329,8 +395,26 @@ export function createUsage(options: UsageOptions): Usage {
     setDimensions: (next) => {
       dimensions = cleanDimensions(next, warn);
     },
-    consent: () => {},
-    identify: () => {},
+    consent: (granted) => {
+      if (!granted) {
+        visitorId = undefined;
+        clearVisitorId(options.cookieDomain);
+        return;
+      }
+      if (gpcSignalled()) {
+        if (!warnedGpc) warn('consent(true) ignored: the browser sends Global Privacy Control, which is a binding opt-out');
+        warnedGpc = true;
+        return;
+      }
+      if (!visitorId) {
+        visitorId = randomId();
+        writeVisitorId(visitorId, options.cookieDomain);
+      }
+    },
+    identify: (id) => {
+      const trimmed = typeof id === 'string' ? id.trim().slice(0, 128) : '';
+      userId = trimmed || undefined;
+    },
     flush: () => flush('manual'),
     stop: () => {
       for (const undo of restore) undo();
