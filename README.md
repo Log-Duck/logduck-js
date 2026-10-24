@@ -212,11 +212,14 @@ A server key is refused.
 | `usage.search(term)` | A site search. Stored only if the environment has search terms switched on; digit runs of six or more are masked on the server |
 | `dimensions`, `usage.setDimensions({...})` | Up to ten lowercase keys describing the page — `dealer`, `section`, `variant` — never an identifier (keys like `email` or `user_id` are refused) |
 | `sampleRate: 8` | Send one hit in eight. A power of two up to 1,024, and the environment must allow it (off by default); sent hits carry the rate and the dashboard weights them back |
-| `consent(true)`, `identify(id)` | Reserved for the consented mode (unique visitors, journeys). No-ops today, so your integration does not change when it arrives |
+| `consent(true)` | The visitor agreed to be recognised across visits: a random visitor ID is minted and kept in local storage, or in a first-party cookie when `cookieDomain` is set (`.example.com` for one visitor across subdomains). `consent(false)` deletes it. Ignored under Global Privacy Control. Stored by the server only once your organization has switched identity collection on in Settings and declared its basis; until then it is stripped and counted |
+| `identify(userId)` | Links later hits to your own user from an authenticated session, and marks them logged in. Needs no consent call and stores nothing on the device, so it works under a contract, legitimate-interest or public-task basis. `identify('')` clears it |
 
-Nothing is stored on or read from the visitor's device: no cookie, no local or
-session storage, no persistent fingerprint. Page views are joined into sessions on the
-server, under a key that changes every day and never leaves it.
+Until `consent(true)` is called, nothing is stored on or read from the visitor's
+device: no cookie, no local or session storage, no persistent fingerprint. Page
+views are joined into sessions on the server, under a key that changes every day
+and never leaves it. The cookie banner, if your basis is consent, is yours; the
+SDK shows none.
 Without a `document` — server rendering, a worker — `createUsage` returns an
 inert object and every call is a no-op. The first non-204 of a session is
 warned once in the console, so a wrong key or an unlisted origin is visible

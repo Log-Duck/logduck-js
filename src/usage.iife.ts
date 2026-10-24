@@ -25,4 +25,5 @@ window.logduck = createUsage({
   sampleRate,
   autoTrack: data.autoTrack !== 'false',
   host: data.host,
+  cookieDomain: data.cookieDomain,
 });
